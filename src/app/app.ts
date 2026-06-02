@@ -38,6 +38,7 @@ export class App implements OnInit, OnDestroy {
   gameCount = 0;
 
   gameLoop: number | null = null;
+  private lastTime = 0;
   keys: { [key: string]: boolean } = {};
 
   // Brick grid constants
@@ -132,29 +133,34 @@ export class App implements OnInit, OnDestroy {
 
   startGameLoop() {
     if (this.gameLoop) cancelAnimationFrame(this.gameLoop);
-    const tick = () => {
-      if (!this.gameOver()) this.update();
+    this.lastTime = 0;
+    const tick = (timestamp: number) => {
+      if (this.lastTime === 0) this.lastTime = timestamp;
+      const dt = Math.min(timestamp - this.lastTime, 50);
+      this.lastTime = timestamp;
+      const f = dt / (1000 / 60);
+      if (!this.gameOver()) this.update(f);
       this.gameLoop = requestAnimationFrame(tick);
     };
     this.gameLoop = requestAnimationFrame(tick);
   }
 
-  update() {
-    this.updatePaddle();
-    this.updateBalls();
-    this.updateLasers();
-    this.updatePowerUps();
+  update(f: number) {
+    this.updatePaddle(f);
+    this.updateBalls(f);
+    this.updateLasers(f);
+    this.updatePowerUps(f);
     if (this.powerUpTimer > 0) {
-      this.powerUpTimer--;
-      if (this.powerUpTimer === 0) this.deactivatePowerUp();
+      this.powerUpTimer -= f;
+      if (this.powerUpTimer <= 0) { this.powerUpTimer = 0; this.deactivatePowerUp(); }
     }
   }
 
-  updatePaddle() {
+  updatePaddle(f: number) {
     if (this.keys['arrowleft'] || this.keys['a'])
-      this.paddle.x = Math.max(0, this.paddle.x - this.paddle.speed);
+      this.paddle.x = Math.max(0, this.paddle.x - this.paddle.speed * f);
     if (this.keys['arrowright'] || this.keys['d'])
-      this.paddle.x = Math.min(this.gameWidth - this.paddle.width, this.paddle.x + this.paddle.speed);
+      this.paddle.x = Math.min(this.gameWidth - this.paddle.width, this.paddle.x + this.paddle.speed * f);
 
     for (const ball of this.balls) {
       if (ball.onPaddle) {
@@ -168,12 +174,12 @@ export class App implements OnInit, OnDestroy {
       for (const ball of this.balls) {
         if (ball.onPaddle) { this.launchBall(ball); launched = true; }
       }
-      if (!launched && this.activePowerUp === 'laser' && this.shootCooldown === 0) {
+      if (!launched && this.activePowerUp === 'laser' && this.shootCooldown <= 0) {
         this.fireLaser();
         this.shootCooldown = 12;
       }
     }
-    if (this.shootCooldown > 0) this.shootCooldown--;
+    if (this.shootCooldown > 0) this.shootCooldown -= f;
   }
 
   launchBall(ball: Ball) {
@@ -189,9 +195,9 @@ export class App implements OnInit, OnDestroy {
     this.laserShots.push({ x: cx + 14, y: this.paddle.y });
   }
 
-  updateLasers() {
+  updateLasers(f: number) {
     this.laserShots = this.laserShots.filter(laser => {
-      laser.y -= 14;
+      laser.y -= 14 * f;
       if (laser.y < 0) return false;
       for (let i = this.bricks.length - 1; i >= 0; i--) {
         const b = this.bricks[i];
@@ -206,12 +212,12 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
-  updateBalls() {
+  updateBalls(f: number) {
     for (const ball of this.balls) {
       if (ball.onPaddle) continue;
 
-      ball.x += ball.vx;
-      ball.y += ball.vy;
+      ball.x += ball.vx * f;
+      ball.y += ball.vy * f;
 
       // Wall bounces
       if (ball.x - ball.radius <= 0)             { ball.x = ball.radius;                  ball.vx =  Math.abs(ball.vx); }
@@ -283,9 +289,9 @@ export class App implements OnInit, OnDestroy {
     return true;
   }
 
-  updatePowerUps() {
+  updatePowerUps(f: number) {
     this.powerUps = this.powerUps.filter(pu => {
-      pu.y += pu.speed;
+      pu.y += pu.speed * f;
       if (pu.x + pu.width > this.paddle.x && pu.x < this.paddle.x + this.paddle.width &&
           pu.y + pu.height >= this.paddle.y && pu.y <= this.paddle.y + this.paddle.height) {
         this.activatePowerUp(pu.type);
