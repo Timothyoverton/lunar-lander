@@ -1,36 +1,54 @@
-# Breakout Game
+# Lunar Lander
 
-A neon retro Breakout game built with Angular 20 — smash all the bricks with a bouncing ball!
+A neon retro Lunar Lander game built with Angular 20 — guide your spacecraft to a gentle landing on the moon!
 
 ## Play Now
 
-🚀 **Play the game:** https://timothyoverton.github.io/breakout-game/
+🚀 **Play the game:** https://timothyoverton.github.io/lunar-lander/
 
 ## How to Play
 
 1. Open the game in your browser (click the link above!)
-2. Press **← → arrow keys** (or **A / D**) to move your paddle left and right
-3. Press **SPACE** to launch the ball
-4. Smash all the bricks to clear the level — don't let the ball fall!
+2. Press **← → arrow keys** (or **A / D**) to rotate your lander
+3. Press **↑ or SPACE** to fire your thruster
+4. Land gently on the **green pads** — watch your speed and angle!
+
+## Landing Requirements
+
+You must touch down on a green pad with:
+- **Speed** — not too fast (horizontal and vertical both matter)
+- **Angle** — lander must be nearly upright
+- Watch the instrument panel — **SPEED** and **ANGLE** turn red if you're out of limits
 
 ## Power-ups
 
-Power-ups drop from bricks when you destroy them. Catch them with your paddle:
+Power-ups appear near landing pads after a successful landing. Fly through them to collect:
 
 | Icon | Power-up | What it does |
 |------|----------|--------------|
-| ⟷ | Wide Paddle | Your paddle gets much wider for 10 seconds |
-| ● | Multi-Ball | Two extra balls join the game! |
-| ↓ | Slow Ball | The ball slows down for 10 seconds |
-| ♥ | Extra Life | Gain one extra life |
-| ⚡ | Laser Shot | Press SPACE to fire lasers upward — destroys bricks! |
+| F (orange) | Fuel Boost | Refills +160 units of fuel |
+| P (purple) | Bigger Pads | All landing pads widen by 50px |
+
+## Scoring
+
+| Bonus | Points |
+|-------|--------|
+| Fuel remaining | ½ fuel × 1 pt each |
+| Level bonus | Level × 100 |
+| Small pad (×2) | +400 |
+| Tiny pad (×3) | +600 |
+| Micro pad (×4) | +800 |
+
+## Enemies
+
+UFOs appear from level 3 onward — they patrol the upper zone and fire at your lander. Avoid their bullets or you'll crash!
 
 ## Tips
 
-- Hit the ball with the **edge of the paddle** to send it at a sharp angle
-- Aim for the top rows first — they give the most points
-- Bricks that take multiple hits will crack and go darker
-- Clear all bricks to advance to the next level (ball gets faster!)
+- Use short thruster bursts — don't burn all your fuel early
+- The ▼ arrows point down to each landing pad
+- Larger pads (no multiplier) are easier but score less — go for the small ones!
+- Levels get tougher: rougher terrain, fewer pads, less fuel, more UFOs
 
 ## Local Development
 
@@ -129,7 +147,7 @@ npm run build:prod
 
 # Copy built files to /docs folder
 mkdir -p docs
-cp -r dist/breakout-game/browser/* docs/
+cp -r dist/lunar-lander/browser/* docs/
 touch docs/.nojekyll
 
 # Commit and push
@@ -143,7 +161,7 @@ git push -u origin master
 ### 6. **Verification**
 ```bash
 # Test that the page is loading
-curl -s https://Timothyoverton.github.io/breakout-game/ | grep "app-root"
+curl -s https://Timothyoverton.github.io/lunar-lander/ | grep "app-root"
 ```
 
 ### ⚠️ Critical Notes
@@ -180,7 +198,7 @@ curl -s https://Timothyoverton.github.io/breakout-game/ | grep "app-root"
 ### 🔗 Live Site URL
 After deployment, the game will be live at:
 ```
-https://Timothyoverton.github.io/breakout-game/
+https://Timothyoverton.github.io/lunar-lander/
 ```
 
 ---
