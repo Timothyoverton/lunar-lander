@@ -107,8 +107,6 @@ export class App implements OnInit, OnDestroy {
     this.level.set(1);
     this.gameOver.set(false);
     this.message.set('');
-    this.sessionHistory = [];
-    this.gameCount = 0;
     this.startLevel();
   }
 
