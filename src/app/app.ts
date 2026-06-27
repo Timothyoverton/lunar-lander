@@ -134,7 +134,7 @@ export class App implements OnInit, OnDestroy {
 
     let h = GH * 0.55;
     for (let i = 0; i <= segs; i++) {
-      const roughness = 70 + lv * 14;
+      const roughness = Math.min(180, 30 + lv * 14);
       h += (Math.random() - 0.5) * roughness;
       h = Math.max(GH * 0.38, Math.min(GH * 0.80, h));
       heights.push(h);
@@ -142,7 +142,7 @@ export class App implements OnInit, OnDestroy {
 
     // Landing pads — fewer, narrower on higher levels
     const padCount = Math.max(1, 3 - Math.floor(lv / 3));
-    const padWidth = Math.max(55, 160 - lv * 13);
+    const padWidth = Math.max(55, 200 - lv * 14);
     const padSeg   = Math.max(1, Math.round(padWidth / segW));
 
     this.pads = [];
@@ -178,7 +178,7 @@ export class App implements OnInit, OnDestroy {
       vx: ((lv % 3) - 1) * 0.5,
       vy: 0.3,
       angle: 0,
-      fuel: Math.max(280, 580 - lv * 22),
+      fuel: Math.max(280, 650 - lv * 22),
       thrusting: false,
     };
   }
@@ -187,7 +187,7 @@ export class App implements OnInit, OnDestroy {
   spawnEnemies() {
     this.enemies = [];
     const lv = this.level();
-    const count = Math.min(Math.floor(lv / 2), 4);
+    const count = lv < 4 ? 0 : Math.min(Math.floor((lv - 3) / 2) + 1, 4);
     for (let i = 0; i < count; i++) {
       this.enemies.push({
         x: Math.random() * GW,
