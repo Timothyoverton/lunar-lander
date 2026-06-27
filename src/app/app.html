@@ -82,6 +82,9 @@
         [style.top.px]="laser.y">
       </div>
 
+      <!-- Special event flash -->
+      <div class="special-msg" *ngIf="specialMessage()">{{ specialMessage() }}</div>
+
       <!-- Launch hint -->
       <div class="launch-hint" *ngIf="hasBallOnPaddle() && !gameOver()">
         Press SPACE to launch!

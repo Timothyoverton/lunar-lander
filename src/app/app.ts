@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 
 interface Paddle { x: number; y: number; width: number; height: number; speed: number; }
 interface Ball { x: number; y: number; radius: number; vx: number; vy: number; onPaddle: boolean; }
-interface Brick { x: number; y: number; width: number; height: number; health: number; maxHealth: number; color: string; points: number; }
+interface Brick { x: number; y: number; width: number; height: number; health: number; maxHealth: number; color: string; points: number; row: number; col: number; }
 interface PowerUp { x: number; y: number; width: number; height: number; speed: number; type: string; color: string; label: string; }
 interface LaserShot { x: number; y: number; }
 interface GameRecord { gameNumber: number; score: number; level: number; time: string; }
@@ -40,6 +40,16 @@ export class App implements OnInit, OnDestroy {
   gameLoop: number | null = null;
   private lastTime = 0;
   keys: { [key: string]: boolean } = {};
+
+  // Special brick events
+  specialMessage = signal('');
+  private specialMessageTimer = 0;
+  private permanentPaddleWidth = 120;
+  private blueMiddleGone = new Set<number>();
+  private redMiddleGone  = new Set<number>();
+  private bluePaddleDone = false;
+  private redBurstDone   = false;
+  private yellowChainDone = false;
 
   // Brick grid constants
   readonly BRICK_COLS     = 12;
@@ -93,6 +103,14 @@ export class App implements OnInit, OnDestroy {
     this.shootCooldown = 0;
     this.powerUps      = [];
     this.laserShots    = [];
+    this.specialMessage.set('');
+    this.specialMessageTimer = 0;
+    this.permanentPaddleWidth = 120;
+    this.blueMiddleGone.clear();
+    this.redMiddleGone.clear();
+    this.bluePaddleDone  = false;
+    this.redBurstDone    = false;
+    this.yellowChainDone = false;
     this.paddle = { x: (this.gameWidth - 120) / 2, y: 672, width: 120, height: 16, speed: 8 };
     this.spawnBricks();
     this.resetBall();
@@ -114,6 +132,7 @@ export class App implements OnInit, OnDestroy {
           maxHealth: def.health,
           color:     def.color,
           points:    def.points,
+          row, col,
         });
       }
     }
@@ -153,6 +172,10 @@ export class App implements OnInit, OnDestroy {
     if (this.powerUpTimer > 0) {
       this.powerUpTimer -= f;
       if (this.powerUpTimer <= 0) { this.powerUpTimer = 0; this.deactivatePowerUp(); }
+    }
+    if (this.specialMessageTimer > 0) {
+      this.specialMessageTimer -= f;
+      if (this.specialMessageTimer <= 0) this.specialMessage.set('');
     }
   }
 
@@ -204,7 +227,11 @@ export class App implements OnInit, OnDestroy {
         if (laser.x + 4 > b.x && laser.x < b.x + b.width && laser.y > b.y && laser.y < b.y + b.height) {
           b.health--;
           this.score.update(s => s + Math.floor(b.points / 2));
-          if (b.health <= 0) this.bricks.splice(i, 1);
+          if (b.health <= 0) {
+            const destroyed = { ...b };
+            this.bricks.splice(i, 1);
+            this.onBrickDestroyed(destroyed);
+          }
           return false;
         }
       }
@@ -245,8 +272,10 @@ export class App implements OnInit, OnDestroy {
           brick.health--;
           this.score.update(s => s + brick.points);
           if (brick.health <= 0) {
+            const destroyed = { ...brick };
             if (Math.random() < 0.12) this.dropPowerUp(brick);
             this.bricks.splice(i, 1);
+            this.onBrickDestroyed(destroyed);
           }
           break;
         }
@@ -319,8 +348,9 @@ export class App implements OnInit, OnDestroy {
     this.powerUpTimer  = this.powerUpDuration;
 
     if (type === 'wide') {
-      this.paddle.width = 200;
-      this.paddle.x = Math.min(this.paddle.x, this.gameWidth - 200);
+      const ww = Math.max(200, this.permanentPaddleWidth + 80);
+      this.paddle.width = ww;
+      this.paddle.x = Math.min(this.paddle.x, this.gameWidth - ww);
     } else if (type === 'multi') {
       const src = this.balls.find(b => !b.onPaddle) ?? this.balls[0];
       if (src) {
@@ -339,8 +369,8 @@ export class App implements OnInit, OnDestroy {
 
   deactivatePowerUp() {
     if (this.activePowerUp === 'wide') {
-      this.paddle.width = 120;
-      this.paddle.x = Math.min(this.paddle.x, this.gameWidth - 120);
+      this.paddle.width = this.permanentPaddleWidth;
+      this.paddle.x = Math.min(this.paddle.x, this.gameWidth - this.permanentPaddleWidth);
     }
     if (this.activePowerUp === 'slow') {
       for (const b of this.balls) { if (!b.onPaddle) { b.vx /= 0.55; b.vy /= 0.55; } }
@@ -355,10 +385,75 @@ export class App implements OnInit, OnDestroy {
     this.powerUps   = [];
     this.laserShots = [];
     this.deactivatePowerUp();
+    this.permanentPaddleWidth = 120;
     this.paddle.width = 120;
     this.paddle.x     = (this.gameWidth - 120) / 2;
+    this.blueMiddleGone.clear();
+    this.redMiddleGone.clear();
+    this.bluePaddleDone  = false;
+    this.redBurstDone    = false;
+    this.yellowChainDone = false;
     this.spawnBricks();
     this.resetBall();
+  }
+
+  onBrickDestroyed(brick: Brick) {
+    const isMiddle = brick.col === 5 || brick.col === 6;
+    if (!isMiddle) return;
+
+    // Blue middle → permanent 3× paddle
+    if (brick.color === '#00ccff' && !this.bluePaddleDone) {
+      this.blueMiddleGone.add(brick.col);
+      if (this.blueMiddleGone.size === 2) {
+        this.bluePaddleDone = true;
+        this.permanentPaddleWidth = 360;
+        this.paddle.width = 360;
+        this.paddle.x = Math.min(this.paddle.x, this.gameWidth - 360);
+        this.specialMessage.set('MEGA PADDLE!');
+        this.specialMessageTimer = 150;
+      }
+    }
+
+    // Red middle → 12-ball burst
+    if (brick.color === '#ff2266' && !this.redBurstDone) {
+      this.redMiddleGone.add(brick.col);
+      if (this.redMiddleGone.size === 2) {
+        this.redBurstDone = true;
+        this.spawnBallBurst(brick.x + brick.width / 2, brick.y + brick.height / 2);
+        this.specialMessage.set('BALL STORM!');
+        this.specialMessageTimer = 150;
+      }
+    }
+
+    // Yellow middle → chain destroy all yellows
+    if (brick.color === '#ffdd00' && !this.yellowChainDone) {
+      this.yellowChainDone = true;
+      this.destroyAllYellow();
+      this.specialMessage.set('YELLOW CHAIN!');
+      this.specialMessageTimer = 150;
+    }
+  }
+
+  spawnBallBurst(x: number, y: number) {
+    const speed = this.BASE_SPEED + (this.level() - 1) * 0.3;
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2;
+      this.balls.push({
+        x, y,
+        radius: this.BALL_RADIUS,
+        vx: Math.sin(angle) * speed,
+        vy: Math.cos(angle) * speed,
+        onPaddle: false,
+      });
+    }
+  }
+
+  destroyAllYellow() {
+    for (const b of this.bricks.filter(b => b.color === '#ffdd00')) {
+      this.score.update(s => s + b.points);
+      if (Math.random() < 0.12) this.dropPowerUp(b);
+    }
+    this.bricks = this.bricks.filter(b => b.color !== '#ffdd00');
   }
 
   endGame() {

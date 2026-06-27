@@ -158,6 +158,27 @@
   box-shadow: 0 0 8px #00ff88, 0 0 16px rgba(0, 255, 136, 0.6);
 }
 
+/* ── Special event flash ─────────────────────────────── */
+.special-msg {
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 42px;
+  font-weight: bold;
+  letter-spacing: 4px;
+  color: #fff;
+  text-shadow: 0 0 20px #fff, 0 0 40px #ffdd00, 0 0 60px #ff8800;
+  pointer-events: none;
+  z-index: 50;
+  animation: special-flash 0.4s ease-in-out infinite alternate;
+}
+
+@keyframes special-flash {
+  from { opacity: 0.7; transform: translate(-50%, -50%) scale(1);    }
+  to   { opacity: 1;   transform: translate(-50%, -50%) scale(1.06); }
+}
+
 /* ── Launch hint ─────────────────────────────────────── */
 .launch-hint {
   position: absolute;
