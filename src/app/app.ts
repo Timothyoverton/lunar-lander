@@ -1,12 +1,54 @@
 import { Component, signal, OnInit, OnDestroy, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
-interface Paddle { x: number; y: number; width: number; height: number; speed: number; }
-interface Ball { x: number; y: number; radius: number; vx: number; vy: number; onPaddle: boolean; }
-interface Brick { x: number; y: number; width: number; height: number; health: number; maxHealth: number; color: string; points: number; row: number; col: number; }
-interface PowerUp { x: number; y: number; width: number; height: number; speed: number; type: string; color: string; label: string; }
-interface LaserShot { x: number; y: number; }
-interface GameRecord { gameNumber: number; score: number; level: number; time: string; }
+interface Vec2 { x: number; y: number; }
+
+interface Lander {
+  x: number; y: number;
+  vx: number; vy: number;
+  angle: number;
+  fuel: number;
+  thrusting: boolean;
+}
+
+interface Particle {
+  x: number; y: number;
+  vx: number; vy: number;
+  life: number; maxLife: number;
+  color: string; size: number;
+}
+
+interface Enemy {
+  x: number; y: number;
+  vx: number; vy: number;
+  radius: number;
+  fireTimer: number;
+}
+
+interface EnemyBullet { x: number; y: number; vx: number; vy: number; }
+
+interface PowerUp {
+  x: number; y: number; vy: number;
+  type: 'fuel' | 'pad';
+  collected: boolean;
+}
+
+interface LandingPad {
+  x: number; y: number;
+  width: number;
+  multiplier: number;
+}
+
+interface GameRecord { level: number; score: number; time: string; }
+
+const GW = 960;
+const GH = 700;
+const GRAVITY   = 0.018;
+const THRUST     = 0.045;
+const ROT_SPEED  = 0.04;
+const MAX_LAND_VX    = 1.2;
+const MAX_LAND_VY    = 2.0;
+const MAX_LAND_ANGLE = 0.35;
 
 @Component({
   selector: 'app-root',
@@ -15,148 +57,156 @@ interface GameRecord { gameNumber: number; score: number; level: number; time: s
   styleUrl: './app.css'
 })
 export class App implements OnInit, OnDestroy {
-  gameWidth  = 960;
-  gameHeight = 720;
+  readonly GW = GW;
+  readonly GH = GH;
+  readonly MAX_LAND_VX = MAX_LAND_VX;
+  readonly MAX_LAND_VY = MAX_LAND_VY;
+  readonly MAX_LAND_ANGLE = MAX_LAND_ANGLE;
 
   score    = signal(0);
   lives    = signal(3);
   level    = signal(1);
   gameOver = signal(false);
+  message  = signal('');
 
-  paddle: Paddle = { x: 420, y: 672, width: 120, height: 16, speed: 8 };
-  balls:      Ball[]      = [];
-  bricks:     Brick[]     = [];
-  powerUps:   PowerUp[]   = [];
-  laserShots: LaserShot[] = [];
+  lander!: Lander;
+  terrain:      Vec2[]        = [];
+  pads:         LandingPad[]  = [];
+  particles:    Particle[]    = [];
+  enemies:      Enemy[]       = [];
+  enemyBullets: EnemyBullet[] = [];
+  powerUps:     PowerUp[]     = [];
 
-  activePowerUp: string | null = null;
-  powerUpTimer = 0;
-  readonly powerUpDuration = 600;
-  shootCooldown = 0;
+  private messageTimer       = 0;
+  private gameLoop: number | null = null;
+  private lastTime           = 0;
+  landed             = false;
+  crashed            = false;
+  private landingPauseTimer  = 0;
 
   sessionHistory: GameRecord[] = [];
-  gameCount = 0;
+  private gameCount = 0;
 
-  gameLoop: number | null = null;
-  private lastTime = 0;
-  keys: { [key: string]: boolean } = {};
-
-  // Special brick events
-  specialMessage = signal('');
-  private specialMessageTimer = 0;
-  private permanentPaddleWidth = 120;
-  private blueMiddleGone = new Set<number>();
-  private redMiddleGone  = new Set<number>();
-  private bluePaddleDone = false;
-  private redBurstDone   = false;
-  private yellowChainDone = false;
-
-  // Brick grid constants
-  readonly BRICK_COLS     = 12;
-  readonly BRICK_W        = 68;
-  readonly BRICK_H        = 22;
-  readonly BRICK_GAP_X    = 4;
-  readonly BRICK_GAP_Y    = 6;
-  readonly BRICK_OFFSET_X = 50;   // (960 - 12*68 - 11*4) / 2 = 50
-  readonly BRICK_OFFSET_Y = 55;
-  readonly BALL_RADIUS    = 9;
-  readonly BASE_SPEED     = 6.5;
-
-  readonly ROW_DEFS = [
-    { color: '#ff2266', health: 3, points: 70 },
-    { color: '#ff6600', health: 2, points: 50 },
-    { color: '#ffdd00', health: 2, points: 40 },
-    { color: '#44ff44', health: 1, points: 30 },
-    { color: '#00ccff', health: 1, points: 20 },
-    { color: '#aa44ff', health: 1, points: 15 },
-    { color: '#ff44aa', health: 1, points: 12 },
-    { color: '#aaaaff', health: 1, points: 10 },
-  ];
-
-  private readonly POWER_UP_DEFS: Record<string, { color: string; label: string; name: string }> = {
-    wide:  { color: '#ffdd00', label: '⟷', name: 'WIDE PADDLE' },
-    multi: { color: '#ff44ff', label: '●', name: 'MULTI-BALL'  },
-    slow:  { color: '#00ccff', label: '↓', name: 'SLOW BALL'   },
-    life:  { color: '#ff4444', label: '♥', name: 'EXTRA LIFE'  },
-    laser: { color: '#00ff88', label: '⚡', name: 'LASER SHOT'  },
-  };
+  keys: Record<string, boolean> = {};
 
   ngOnInit()    { this.initGame(); }
   ngOnDestroy() { if (this.gameLoop) cancelAnimationFrame(this.gameLoop); }
 
   @HostListener('window:keydown', ['$event'])
-  handleKeyDown(e: KeyboardEvent) {
-    this.keys[e.key.toLowerCase()] = true;
-    if (e.key === ' ') e.preventDefault();
+  onKeyDown(e: KeyboardEvent) {
+    this.keys[e.key] = true;
+    if ([' ', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
   }
-
   @HostListener('window:keyup', ['$event'])
-  handleKeyUp(e: KeyboardEvent) { this.keys[e.key.toLowerCase()] = false; }
+  onKeyUp(e: KeyboardEvent) { this.keys[e.key] = false; }
 
+  // ── Init ──────────────────────────────────────────────────────────────────
   initGame() {
     this.score.set(0);
     this.lives.set(3);
     this.level.set(1);
     this.gameOver.set(false);
-    this.activePowerUp = null;
-    this.powerUpTimer  = 0;
-    this.shootCooldown = 0;
-    this.powerUps      = [];
-    this.laserShots    = [];
-    this.specialMessage.set('');
-    this.specialMessageTimer = 0;
-    this.permanentPaddleWidth = 120;
-    this.blueMiddleGone.clear();
-    this.redMiddleGone.clear();
-    this.bluePaddleDone  = false;
-    this.redBurstDone    = false;
-    this.yellowChainDone = false;
-    this.paddle = { x: (this.gameWidth - 120) / 2, y: 672, width: 120, height: 16, speed: 8 };
-    this.spawnBricks();
-    this.resetBall();
-    this.startGameLoop();
+    this.message.set('');
+    this.sessionHistory = [];
+    this.gameCount = 0;
+    this.startLevel();
   }
 
-  spawnBricks() {
-    this.bricks = [];
-    const rows = Math.min(5 + Math.floor((this.level() - 1) / 2), 8);
-    for (let row = 0; row < rows; row++) {
-      const def = this.ROW_DEFS[Math.min(row, this.ROW_DEFS.length - 1)];
-      for (let col = 0; col < this.BRICK_COLS; col++) {
-        this.bricks.push({
-          x:         this.BRICK_OFFSET_X + col * (this.BRICK_W + this.BRICK_GAP_X),
-          y:         this.BRICK_OFFSET_Y + row * (this.BRICK_H + this.BRICK_GAP_Y),
-          width:     this.BRICK_W,
-          height:    this.BRICK_H,
-          health:    def.health,
-          maxHealth: def.health,
-          color:     def.color,
-          points:    def.points,
-          row, col,
-        });
-      }
+  startLevel() {
+    this.landed  = false;
+    this.crashed = false;
+    this.landingPauseTimer = 0;
+    this.particles    = [];
+    this.enemyBullets = [];
+    this.powerUps     = [];
+    this.buildTerrain();
+    this.spawnLander();
+    this.spawnEnemies();
+    if (!this.gameLoop) this.beginLoop();
+  }
+
+  // ── Terrain ───────────────────────────────────────────────────────────────
+  buildTerrain() {
+    const lv   = this.level();
+    const segs = 40;
+    const segW = GW / segs;
+    const heights: number[] = [];
+
+    let h = GH * 0.55;
+    for (let i = 0; i <= segs; i++) {
+      const roughness = 70 + lv * 14;
+      h += (Math.random() - 0.5) * roughness;
+      h = Math.max(GH * 0.38, Math.min(GH * 0.80, h));
+      heights.push(h);
+    }
+
+    // Landing pads — fewer, narrower on higher levels
+    const padCount = Math.max(1, 3 - Math.floor(lv / 3));
+    const padWidth = Math.max(55, 160 - lv * 13);
+    const padSeg   = Math.max(1, Math.round(padWidth / segW));
+
+    this.pads = [];
+    for (let p = 0; p < padCount; p++) {
+      const col = Math.min(segs - padSeg - 2,
+        Math.floor(3 + (p * (segs - 6)) / padCount + 1 + Math.random() * 2));
+      const flatH = heights[col];
+      for (let i = col; i <= col + padSeg && i <= segs; i++) heights[i] = flatH;
+      this.pads.push({
+        x: col * segW,
+        y: flatH,
+        width: padSeg * segW,
+        multiplier: padWidth <= 75 ? 4 : padWidth <= 100 ? 3 : padWidth <= 130 ? 2 : 1,
+      });
+    }
+
+    const pts: Vec2[] = [];
+    for (let i = 0; i <= segs; i++) pts.push({ x: i * segW, y: heights[i] });
+    pts.push({ x: GW, y: GH }, { x: 0, y: GH });
+    this.terrain = pts;
+  }
+
+  terrainPath(): string {
+    return this.terrain.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ') + ' Z';
+  }
+
+  // ── Lander ────────────────────────────────────────────────────────────────
+  spawnLander() {
+    const lv = this.level();
+    const startX = GW * (0.15 + ((lv * 137) % 70) / 100);
+    this.lander = {
+      x: startX, y: 55,
+      vx: ((lv % 3) - 1) * 0.5,
+      vy: 0.3,
+      angle: 0,
+      fuel: Math.max(280, 580 - lv * 22),
+      thrusting: false,
+    };
+  }
+
+  // ── Enemies ───────────────────────────────────────────────────────────────
+  spawnEnemies() {
+    this.enemies = [];
+    const lv = this.level();
+    const count = Math.min(Math.floor(lv / 2), 4);
+    for (let i = 0; i < count; i++) {
+      this.enemies.push({
+        x: Math.random() * GW,
+        y: 80 + Math.random() * 180,
+        vx: (Math.random() > 0.5 ? 1 : -1) * (0.5 + Math.random() * 0.9),
+        vy: 0,
+        radius: 18,
+        fireTimer: 90 + Math.random() * 150,
+      });
     }
   }
 
-  resetBall() {
-    const speed = this.BASE_SPEED + (this.level() - 1) * 0.3;
-    this.balls = [{
-      x: this.paddle.x + this.paddle.width / 2,
-      y: this.paddle.y - this.BALL_RADIUS,
-      radius: this.BALL_RADIUS,
-      vx: 0,
-      vy: -speed,
-      onPaddle: true,
-    }];
-  }
-
-  startGameLoop() {
-    if (this.gameLoop) cancelAnimationFrame(this.gameLoop);
+  // ── Game loop ─────────────────────────────────────────────────────────────
+  beginLoop() {
     this.lastTime = 0;
-    const tick = (timestamp: number) => {
-      if (this.lastTime === 0) this.lastTime = timestamp;
-      const dt = Math.min(timestamp - this.lastTime, 50);
-      this.lastTime = timestamp;
+    const tick = (ts: number) => {
+      if (this.lastTime === 0) this.lastTime = ts;
+      const dt = Math.min(ts - this.lastTime, 50);
+      this.lastTime = ts;
       const f = dt / (1000 / 60);
       if (!this.gameOver()) this.update(f);
       this.gameLoop = requestAnimationFrame(tick);
@@ -165,333 +215,247 @@ export class App implements OnInit, OnDestroy {
   }
 
   update(f: number) {
-    this.updatePaddle(f);
-    this.updateBalls(f);
-    this.updateLasers(f);
-    this.updatePowerUps(f);
-    if (this.powerUpTimer > 0) {
-      this.powerUpTimer -= f;
-      if (this.powerUpTimer <= 0) { this.powerUpTimer = 0; this.deactivatePowerUp(); }
-    }
-    if (this.specialMessageTimer > 0) {
-      this.specialMessageTimer -= f;
-      if (this.specialMessageTimer <= 0) this.specialMessage.set('');
-    }
-  }
-
-  updatePaddle(f: number) {
-    if (this.keys['arrowleft'] || this.keys['a'])
-      this.paddle.x = Math.max(0, this.paddle.x - this.paddle.speed * f);
-    if (this.keys['arrowright'] || this.keys['d'])
-      this.paddle.x = Math.min(this.gameWidth - this.paddle.width, this.paddle.x + this.paddle.speed * f);
-
-    for (const ball of this.balls) {
-      if (ball.onPaddle) {
-        ball.x = this.paddle.x + this.paddle.width / 2;
-        ball.y = this.paddle.y - ball.radius;
-      }
+    if (this.messageTimer > 0) {
+      this.messageTimer -= f;
+      if (this.messageTimer <= 0) this.message.set('');
     }
 
-    if (this.keys[' ']) {
-      let launched = false;
-      for (const ball of this.balls) {
-        if (ball.onPaddle) { this.launchBall(ball); launched = true; }
-      }
-      if (!launched && this.activePowerUp === 'laser' && this.shootCooldown <= 0) {
-        this.fireLaser();
-        this.shootCooldown = 12;
-      }
-    }
-    if (this.shootCooldown > 0) this.shootCooldown -= f;
-  }
-
-  launchBall(ball: Ball) {
-    const speed = this.BASE_SPEED + (this.level() - 1) * 0.3;
-    ball.onPaddle = false;
-    ball.vx = speed * 0.35 * (Math.random() > 0.5 ? 1 : -1);
-    ball.vy = -speed;
-  }
-
-  fireLaser() {
-    const cx = this.paddle.x + this.paddle.width / 2;
-    this.laserShots.push({ x: cx - 18, y: this.paddle.y });
-    this.laserShots.push({ x: cx + 14, y: this.paddle.y });
-  }
-
-  updateLasers(f: number) {
-    this.laserShots = this.laserShots.filter(laser => {
-      laser.y -= 14 * f;
-      if (laser.y < 0) return false;
-      for (let i = this.bricks.length - 1; i >= 0; i--) {
-        const b = this.bricks[i];
-        if (laser.x + 4 > b.x && laser.x < b.x + b.width && laser.y > b.y && laser.y < b.y + b.height) {
-          b.health--;
-          this.score.update(s => s + Math.floor(b.points / 2));
-          if (b.health <= 0) {
-            const destroyed = { ...b };
-            this.bricks.splice(i, 1);
-            this.onBrickDestroyed(destroyed);
-          }
-          return false;
+    if (this.landed || this.crashed) {
+      this.landingPauseTimer -= f;
+      this.updateParticles(f);
+      if (this.landingPauseTimer <= 0) {
+        if (this.crashed) {
+          if (this.lives() <= 1) { this.doGameOver(); return; }
+          this.lives.update(l => l - 1);
         }
+        this.startLevel();
       }
-      return true;
-    });
-  }
-
-  updateBalls(f: number) {
-    for (const ball of this.balls) {
-      if (ball.onPaddle) continue;
-
-      ball.x += ball.vx * f;
-      ball.y += ball.vy * f;
-
-      // Wall bounces
-      if (ball.x - ball.radius <= 0)             { ball.x = ball.radius;                  ball.vx =  Math.abs(ball.vx); }
-      if (ball.x + ball.radius >= this.gameWidth) { ball.x = this.gameWidth - ball.radius; ball.vx = -Math.abs(ball.vx); }
-      if (ball.y - ball.radius <= 0)             { ball.y = ball.radius;                  ball.vy =  Math.abs(ball.vy); }
-
-      // Paddle bounce — angle based on hit position
-      if (ball.vy > 0 &&
-          ball.x > this.paddle.x - ball.radius &&
-          ball.x < this.paddle.x + this.paddle.width + ball.radius &&
-          ball.y + ball.radius >= this.paddle.y &&
-          ball.y < this.paddle.y + this.paddle.height) {
-        const hitPos = (ball.x - (this.paddle.x + this.paddle.width / 2)) / (this.paddle.width / 2);
-        const speed  = Math.sqrt(ball.vx ** 2 + ball.vy ** 2);
-        const angle  = hitPos * (Math.PI / 3);  // -60° to +60°
-        ball.vx = Math.sin(angle) * speed;
-        ball.vy = -Math.max(Math.cos(angle) * speed, 2);
-        ball.y  = this.paddle.y - ball.radius;
-      }
-
-      // Brick collisions
-      for (let i = this.bricks.length - 1; i >= 0; i--) {
-        if (this.collideBallBrick(ball, this.bricks[i])) {
-          const brick = this.bricks[i];
-          brick.health--;
-          this.score.update(s => s + brick.points);
-          if (brick.health <= 0) {
-            const destroyed = { ...brick };
-            if (Math.random() < 0.12) this.dropPowerUp(brick);
-            this.bricks.splice(i, 1);
-            this.onBrickDestroyed(destroyed);
-          }
-          break;
-        }
-      }
-    }
-
-    this.balls = this.balls.filter(b => b.onPaddle || b.y < this.gameHeight + 20);
-
-    if (this.balls.length === 0) {
-      if (this.lives() <= 1) { this.endGame(); return; }
-      this.lives.update(l => l - 1);
-      this.resetBall();
       return;
     }
 
-    if (this.bricks.length === 0) this.nextLevel();
+    this.updateLander(f);
+    this.updateEnemies(f);
+    this.updateParticles(f);
+    this.updatePowerUps(f);
+    this.checkCollisions();
   }
 
-  collideBallBrick(ball: Ball, brick: Brick): boolean {
-    const closestX = Math.max(brick.x, Math.min(ball.x, brick.x + brick.width));
-    const closestY = Math.max(brick.y, Math.min(ball.y, brick.y + brick.height));
-    const dx = ball.x - closestX;
-    const dy = ball.y - closestY;
-    if (dx * dx + dy * dy > ball.radius * ball.radius) return false;
+  updateLander(f: number) {
+    const l = this.lander;
+    if (this.keys['ArrowLeft']  || this.keys['a']) l.angle -= ROT_SPEED * f;
+    if (this.keys['ArrowRight'] || this.keys['d']) l.angle += ROT_SPEED * f;
 
-    const overlapL = (ball.x + ball.radius) - brick.x;
-    const overlapR = (brick.x + brick.width)  - (ball.x - ball.radius);
-    const overlapT = (ball.y + ball.radius) - brick.y;
-    const overlapB = (brick.y + brick.height) - (ball.y - ball.radius);
-    const minH = Math.min(overlapL, overlapR);
-    const minV = Math.min(overlapT, overlapB);
-
-    if (minV <= minH) {
-      ball.vy = -ball.vy;
-      ball.y += (overlapT < overlapB ? -overlapT : overlapB);
-    } else {
-      ball.vx = -ball.vx;
-      ball.x += (overlapL < overlapR ? -overlapL : overlapR);
-    }
-    return true;
-  }
-
-  updatePowerUps(f: number) {
-    this.powerUps = this.powerUps.filter(pu => {
-      pu.y += pu.speed * f;
-      if (pu.x + pu.width > this.paddle.x && pu.x < this.paddle.x + this.paddle.width &&
-          pu.y + pu.height >= this.paddle.y && pu.y <= this.paddle.y + this.paddle.height) {
-        this.activatePowerUp(pu.type);
-        return false;
-      }
-      return pu.y < this.gameHeight;
-    });
-  }
-
-  dropPowerUp(brick: Brick) {
-    const keys = Object.keys(this.POWER_UP_DEFS);
-    const type = keys[Math.floor(Math.random() * keys.length)];
-    const def  = this.POWER_UP_DEFS[type];
-    this.powerUps.push({
-      x: brick.x + brick.width / 2 - 14,
-      y: brick.y + brick.height,
-      width: 28, height: 28, speed: 2,
-      type, color: def.color, label: def.label,
-    });
-  }
-
-  activatePowerUp(type: string) {
-    this.deactivatePowerUp();
-    this.activePowerUp = type;
-    this.powerUpTimer  = this.powerUpDuration;
-
-    if (type === 'wide') {
-      const ww = Math.max(200, this.permanentPaddleWidth + 80);
-      this.paddle.width = ww;
-      this.paddle.x = Math.min(this.paddle.x, this.gameWidth - ww);
-    } else if (type === 'multi') {
-      const src = this.balls.find(b => !b.onPaddle) ?? this.balls[0];
-      if (src) {
-        const speed = Math.sqrt(src.vx ** 2 + src.vy ** 2);
-        this.balls.push({ ...src, vx:  speed * 0.7, vy: -speed * 0.75 });
-        this.balls.push({ ...src, vx: -speed * 0.7, vy: -speed * 0.75 });
-      }
-      this.powerUpTimer = 90;
-    } else if (type === 'slow') {
-      for (const b of this.balls) { if (!b.onPaddle) { b.vx *= 0.55; b.vy *= 0.55; } }
-    } else if (type === 'life') {
-      this.lives.update(l => Math.min(l + 1, 9));
-      this.powerUpTimer = 90;
-    }
-  }
-
-  deactivatePowerUp() {
-    if (this.activePowerUp === 'wide') {
-      this.paddle.width = this.permanentPaddleWidth;
-      this.paddle.x = Math.min(this.paddle.x, this.gameWidth - this.permanentPaddleWidth);
-    }
-    if (this.activePowerUp === 'slow') {
-      for (const b of this.balls) { if (!b.onPaddle) { b.vx /= 0.55; b.vy /= 0.55; } }
-    }
-    this.activePowerUp = null;
-    this.powerUpTimer  = 0;
-  }
-
-  nextLevel() {
-    this.level.update(l => l + 1);
-    this.balls      = [];
-    this.powerUps   = [];
-    this.laserShots = [];
-    this.deactivatePowerUp();
-    this.permanentPaddleWidth = 120;
-    this.paddle.width = 120;
-    this.paddle.x     = (this.gameWidth - 120) / 2;
-    this.blueMiddleGone.clear();
-    this.redMiddleGone.clear();
-    this.bluePaddleDone  = false;
-    this.redBurstDone    = false;
-    this.yellowChainDone = false;
-    this.spawnBricks();
-    this.resetBall();
-  }
-
-  onBrickDestroyed(brick: Brick) {
-    const isMiddle = brick.col === 5 || brick.col === 6;
-    if (!isMiddle) return;
-
-    // Blue middle → permanent 3× paddle
-    if (brick.color === '#00ccff' && !this.bluePaddleDone) {
-      this.blueMiddleGone.add(brick.col);
-      if (this.blueMiddleGone.size === 2) {
-        this.bluePaddleDone = true;
-        this.permanentPaddleWidth = 360;
-        this.paddle.width = 360;
-        this.paddle.x = Math.min(this.paddle.x, this.gameWidth - 360);
-        this.specialMessage.set('MEGA PADDLE!');
-        this.specialMessageTimer = 150;
-      }
+    l.thrusting = !!(this.keys['ArrowUp'] || this.keys[' ']) && l.fuel > 0;
+    if (l.thrusting) {
+      l.vx += Math.sin(l.angle) * THRUST * f;
+      l.vy -= Math.cos(l.angle) * THRUST * f;
+      l.fuel = Math.max(0, l.fuel - f);
+      this.emitThrust(f);
     }
 
-    // Red middle → 12-ball burst
-    if (brick.color === '#ff2266' && !this.redBurstDone) {
-      this.redMiddleGone.add(brick.col);
-      if (this.redMiddleGone.size === 2) {
-        this.redBurstDone = true;
-        this.spawnBallBurst(brick.x + brick.width / 2, brick.y + brick.height / 2);
-        this.specialMessage.set('BALL STORM!');
-        this.specialMessageTimer = 150;
-      }
-    }
+    l.vy += GRAVITY * f;
+    l.x  += l.vx * f;
+    l.y  += l.vy * f;
 
-    // Yellow middle → chain destroy all yellows
-    if (brick.color === '#ffdd00' && !this.yellowChainDone) {
-      this.yellowChainDone = true;
-      this.destroyAllYellow();
-      this.specialMessage.set('YELLOW CHAIN!');
-      this.specialMessageTimer = 150;
-    }
+    if (l.x < -20)      l.x = GW + 20;
+    if (l.x > GW + 20)  l.x = -20;
+    if (l.y < 10) { l.y = 10; l.vy = Math.max(0, l.vy); }
   }
 
-  spawnBallBurst(x: number, y: number) {
-    const speed = this.BASE_SPEED + (this.level() - 1) * 0.3;
-    for (let i = 0; i < 12; i++) {
-      const angle = (i / 12) * Math.PI * 2;
-      this.balls.push({
-        x, y,
-        radius: this.BALL_RADIUS,
-        vx: Math.sin(angle) * speed,
-        vy: Math.cos(angle) * speed,
-        onPaddle: false,
+  emitThrust(f: number) {
+    const l = this.lander;
+    const count = Math.ceil(3 * f);
+    for (let i = 0; i < count; i++) {
+      const dir   = l.angle + Math.PI + (Math.random() - 0.5) * 0.5;
+      const speed = 1.5 + Math.random() * 2;
+      this.particles.push({
+        x: l.x - Math.sin(l.angle) * 10,
+        y: l.y + Math.cos(l.angle) * 10,
+        vx: Math.sin(dir) * speed, vy: -Math.cos(dir) * speed,
+        life: 18 + Math.random() * 14, maxLife: 32,
+        color: Math.random() > 0.5 ? '#ff8800' : '#ffdd00',
+        size: 3 + Math.random() * 3,
       });
     }
   }
 
-  destroyAllYellow() {
-    for (const b of this.bricks.filter(b => b.color === '#ffdd00')) {
-      this.score.update(s => s + b.points);
-      if (Math.random() < 0.12) this.dropPowerUp(b);
+  emitExplosion(x: number, y: number) {
+    for (let i = 0; i < 50; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 1 + Math.random() * 4;
+      this.particles.push({
+        x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+        life: 30 + Math.random() * 30, maxLife: 60,
+        color: ['#ff4400','#ff8800','#ffdd00','#ffffff'][Math.floor(Math.random() * 4)],
+        size: 2 + Math.random() * 6,
+      });
     }
-    this.bricks = this.bricks.filter(b => b.color !== '#ffdd00');
   }
 
-  endGame() {
-    this.gameOver.set(true);
-    this.gameCount++;
-    this.sessionHistory.unshift({
-      gameNumber: this.gameCount,
-      score:      this.score(),
-      level:      this.level(),
-      time:       new Date().toLocaleTimeString(),
+  updateParticles(f: number) {
+    this.particles = this.particles.filter(p => {
+      p.x += p.vx * f; p.y += p.vy * f;
+      p.vy += 0.04 * f; p.life -= f;
+      return p.life > 0;
     });
   }
 
+  updateEnemies(f: number) {
+    const l = this.lander;
+    for (const e of this.enemies) {
+      e.x += e.vx * f; e.y += e.vy * f;
+      if (e.x < 20)  { e.x = 20;  e.vx =  Math.abs(e.vx); }
+      if (e.x > GW - 20) { e.x = GW - 20; e.vx = -Math.abs(e.vx); }
+      e.vy += (Math.random() - 0.5) * 0.06 * f;
+      e.vy  = Math.max(-0.6, Math.min(0.6, e.vy));
+      if (e.y < 55)  e.vy = Math.abs(e.vy);
+      if (e.y > 280) e.vy = -Math.abs(e.vy);
+
+      e.fireTimer -= f;
+      if (e.fireTimer <= 0) {
+        e.fireTimer = 100 + Math.random() * 160;
+        const dx = l.x - e.x, dy = l.y - e.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        this.enemyBullets.push({ x: e.x, y: e.y, vx: dx / dist * 2.8, vy: dy / dist * 2.8 });
+      }
+    }
+    this.enemyBullets = this.enemyBullets.filter(b => {
+      b.x += b.vx * f; b.y += b.vy * f;
+      return b.x > 0 && b.x < GW && b.y > 0 && b.y < GH;
+    });
+  }
+
+  updatePowerUps(f: number) {
+    this.powerUps = this.powerUps.filter(p => {
+      p.y += p.vy * f;
+      return p.y < GH && !p.collected;
+    });
+  }
+
+  // ── Collisions ────────────────────────────────────────────────────────────
+  checkCollisions() {
+    const l = this.lander;
+
+    const terrY = this.getTerrainY(l.x);
+    if (l.y + 14 >= terrY) {
+      const pad = this.pads.find(p => l.x >= p.x && l.x <= p.x + p.width);
+      if (pad && Math.abs(l.vx) <= MAX_LAND_VX && l.vy <= MAX_LAND_VY && Math.abs(l.angle) <= MAX_LAND_ANGLE) {
+        this.doLand(pad);
+      } else {
+        this.doCrash(l.x, l.y);
+      }
+      return;
+    }
+
+    for (const e of this.enemies) {
+      const dx = l.x - e.x, dy = l.y - e.y;
+      if (dx * dx + dy * dy < (e.radius + 12) ** 2) { this.doCrash(l.x, l.y); return; }
+    }
+
+    for (const b of this.enemyBullets) {
+      const dx = l.x - b.x, dy = l.y - b.y;
+      if (dx * dx + dy * dy < 14 * 14) { this.doCrash(l.x, l.y); return; }
+    }
+
+    for (const p of this.powerUps) {
+      const dx = l.x - p.x, dy = l.y - p.y;
+      if (dx * dx + dy * dy < 22 * 22 && !p.collected) {
+        p.collected = true;
+        if (p.type === 'fuel') {
+          this.lander.fuel = Math.min(this.lander.fuel + 160, 600);
+          this.showMessage('+FUEL BOOST!');
+        } else {
+          this.growPads();
+          this.showMessage('PADS WIDENED!');
+        }
+      }
+    }
+  }
+
+  getTerrainY(x: number): number {
+    const pts = this.terrain;
+    for (let i = 0; i < pts.length - 3; i++) {
+      if (x >= pts[i].x && x < pts[i + 1].x) {
+        const t = (x - pts[i].x) / (pts[i + 1].x - pts[i].x);
+        return pts[i].y + t * (pts[i + 1].y - pts[i].y);
+      }
+    }
+    return GH;
+  }
+
+  doLand(pad: LandingPad) {
+    this.landed = true;
+    const fuelBonus  = Math.floor(this.lander.fuel * 0.5);
+    const levelBonus = this.level() * 100;
+    const padBonus   = pad.multiplier * 200;
+    const pts = fuelBonus + levelBonus + padBonus;
+    this.score.update(s => s + pts);
+    this.showMessage(`NICE LANDING!  +${pts}`);
+    this.landingPauseTimer = 150;
+    // Maybe drop a power-up near the pad
+    if (Math.random() < 0.35) {
+      const type: 'fuel' | 'pad' = Math.random() < 0.5 ? 'fuel' : 'pad';
+      this.powerUps.push({ x: pad.x + pad.width / 2, y: pad.y - 60, vy: 0, type, collected: false });
+    }
+    setTimeout(() => this.level.update(l => l + 1), 0);
+  }
+
+  doCrash(x: number, y: number) {
+    if (this.crashed) return;
+    this.crashed = true;
+    this.emitExplosion(x, y);
+    this.showMessage('CRASHED!');
+    this.landingPauseTimer = 130;
+  }
+
+  growPads() {
+    for (const p of this.pads) {
+      const extra = 50;
+      p.x     = Math.max(0, p.x - extra / 2);
+      p.width = Math.min(p.width + extra, 280);
+    }
+  }
+
+  showMessage(msg: string) {
+    this.message.set(msg);
+    this.messageTimer = 130;
+  }
+
+  doGameOver() {
+    this.gameOver.set(true);
+    this.gameCount++;
+    this.sessionHistory.unshift({ level: this.level(), score: this.score(), time: new Date().toLocaleTimeString() });
+  }
+
   restartGame() {
-    if (this.gameLoop) cancelAnimationFrame(this.gameLoop);
+    if (this.gameLoop) { cancelAnimationFrame(this.gameLoop); this.gameLoop = null; }
     this.initGame();
   }
 
-  brickDisplayColor(brick: Brick): string {
-    return brick.health < brick.maxHealth ? brick.color + '88' : brick.color;
+  // ── Template helpers ──────────────────────────────────────────────────────
+  landerTransform(): string {
+    const l = this.lander;
+    return `translate(${l?.x ?? 0} ${l?.y ?? 0}) rotate(${((l?.angle ?? 0) * 180 / Math.PI).toFixed(2)})`;
   }
 
-  paddleBackground(): string {
-    return this.activePowerUp === 'wide'
-      ? 'linear-gradient(180deg, #ffff88 0%, #ffdd00 100%)'
-      : 'linear-gradient(180deg, #88ff88 0%, #00ff00 100%)';
+  particleOpacity(p: Particle): number { return Math.max(0, p.life / p.maxLife); }
+
+  fuelPct(): number { return Math.round(((this.lander?.fuel ?? 0) / 580) * 100); }
+
+  fuelColor(): string {
+    const p = this.fuelPct();
+    return p > 50 ? '#00ff88' : p > 25 ? '#ffdd00' : '#ff4444';
   }
 
-  paddleShadow(): string {
-    return this.activePowerUp === 'wide'
-      ? '0 0 18px #ffdd00, 0 0 36px rgba(255,221,0,0.4)'
-      : '0 0 18px #00ff00, 0 0 36px rgba(0,255,0,0.4)';
-  }
+  velColor(): string { return this.speedOk() ? '#00ff88' : '#ff4444'; }
+  angColor(): string { return this.angleOk() ? '#00ff88' : '#ff4444'; }
 
-  livesArray(): number[]   { return Array(this.lives()).fill(0); }
-  hasBallOnPaddle(): boolean { return this.balls.some(b => b.onPaddle); }
-  powerUpName(): string    { return this.activePowerUp ? (this.POWER_UP_DEFS[this.activePowerUp]?.name  ?? '') : ''; }
-  powerUpColor(): string   { return this.activePowerUp ? (this.POWER_UP_DEFS[this.activePowerUp]?.color ?? '#fff') : '#fff'; }
-  powerUpSeconds(): number { return Math.ceil(this.powerUpTimer / 60); }
-  getBestScore(): number   { return this.sessionHistory.length ? Math.max(...this.sessionHistory.map(r => r.score)) : 0; }
+  speedOk(): boolean {
+    return Math.abs(this.lander?.vx ?? 0) <= MAX_LAND_VX && (this.lander?.vy ?? 0) <= MAX_LAND_VY;
+  }
+  angleOk(): boolean { return Math.abs(this.lander?.angle ?? 0) <= MAX_LAND_ANGLE; }
+
+  padLabel(pad: LandingPad): string { return pad.multiplier > 1 ? `×${pad.multiplier}` : ''; }
+  livesArray(): number[] { return Array(this.lives()).fill(0); }
+  getBestScore(): number { return this.sessionHistory.length ? Math.max(...this.sessionHistory.map(r => r.score)) : 0; }
 }

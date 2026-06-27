@@ -1,135 +1,135 @@
 <div class="game-wrapper">
 
   <!-- HUD -->
-  <div class="hud" [style.width.px]="gameWidth">
-    <div class="hud-item">
-      Score: {{ score() }}
-    </div>
+  <div class="hud" [style.width.px]="GW">
+    <div class="hud-item">Score: {{ score() }}</div>
     <div class="hud-item hud-lives">
-      <span *ngFor="let _ of livesArray()" class="life-heart">♥</span>
+      <span *ngFor="let _ of livesArray()" class="life-icon">▲</span>
     </div>
-    <div class="hud-title">BREAKOUT</div>
-    <div class="hud-item hud-level">Level: {{ level() }}</div>
+    <div class="hud-title">LUNAR LANDER</div>
+    <div class="hud-item hud-center">Level: {{ level() }}</div>
     <div class="hud-item hud-right">Best: {{ getBestScore() }}</div>
   </div>
 
-  <!-- Active power-up bar -->
-  <div class="powerup-bar"
-       *ngIf="activePowerUp && powerUpSeconds() > 1"
-       [style.width.px]="gameWidth"
-       [style.border-color]="powerUpColor()"
-       [style.color]="powerUpColor()">
-    <span class="powerup-name">{{ powerUpName() }}</span>
-    <span class="powerup-timer">{{ powerUpSeconds() }}s</span>
+  <!-- Instrument panel -->
+  <div class="instruments" [style.width.px]="GW">
+    <div class="inst-group">
+      <span class="inst-label">FUEL</span>
+      <div class="fuel-bar-bg">
+        <div class="fuel-bar-fill" [style.width.%]="fuelPct()" [style.background]="fuelColor()"></div>
+      </div>
+      <span class="inst-val" [style.color]="fuelColor()">{{ fuelPct() }}%</span>
+    </div>
+    <div class="inst-group">
+      <span class="inst-label">SPEED</span>
+      <span class="inst-val" [style.color]="velColor()">{{ speedOk() ? 'OK' : 'FAST' }}</span>
+    </div>
+    <div class="inst-group">
+      <span class="inst-label">ANGLE</span>
+      <span class="inst-val" [style.color]="angColor()">{{ angleOk() ? 'OK' : 'TILT' }}</span>
+    </div>
   </div>
 
   <!-- Game board -->
   <div class="game-container">
     <div class="game-board"
-         [style.width.px]="gameWidth"
-         [style.height.px]="gameHeight"
+         [style.width.px]="GW"
+         [style.height.px]="GH"
          [class.is-game-over]="gameOver()">
 
-      <!-- Bricks -->
-      <div
-        *ngFor="let brick of bricks"
-        class="brick"
-        [class.damaged]="brick.health < brick.maxHealth"
-        [style.left.px]="brick.x"
-        [style.top.px]="brick.y"
-        [style.width.px]="brick.width"
-        [style.height.px]="brick.height"
-        [style.background]="brickDisplayColor(brick)"
-        [style.box-shadow]="'0 0 8px ' + brickDisplayColor(brick)">
-      </div>
+      <svg [attr.width]="GW" [attr.height]="GH" class="game-svg">
 
-      <!-- Paddle -->
-      <div
-        class="paddle"
-        [style.left.px]="paddle.x"
-        [style.top.px]="paddle.y"
-        [style.width.px]="paddle.width"
-        [style.height.px]="paddle.height"
-        [style.background]="paddleBackground()"
-        [style.box-shadow]="paddleShadow()">
-      </div>
+        <!-- Stars (static) -->
+        <circle *ngFor="let s of [40,120,200,310,440,550,650,760,870,900,80,350,480,700,820]"
+                [attr.cx]="s * 1.07 % GW" [attr.cy]="s * 0.61 % (GH * 0.4)"
+                r="1.5" fill="white" opacity="0.6"/>
 
-      <!-- Balls -->
-      <div
-        *ngFor="let ball of balls"
-        class="ball"
-        [style.left.px]="ball.x - ball.radius"
-        [style.top.px]="ball.y - ball.radius"
-        [style.width.px]="ball.radius * 2"
-        [style.height.px]="ball.radius * 2">
-      </div>
+        <!-- Terrain -->
+        <path [attr.d]="terrainPath()" fill="#4a5568" stroke="#718096" stroke-width="1.5"/>
 
-      <!-- Power-up drops -->
-      <div
-        *ngFor="let pu of powerUps"
-        class="power-up"
-        [style.left.px]="pu.x"
-        [style.top.px]="pu.y"
-        [style.background]="pu.color"
-        [style.box-shadow]="'0 0 14px 4px ' + pu.color"
-        [style.border-color]="pu.color">{{ pu.label }}</div>
+        <!-- Landing pads -->
+        <g *ngFor="let pad of pads">
+          <rect [attr.x]="pad.x" [attr.y]="pad.y" [attr.width]="pad.width" height="5"
+                fill="#00ff88" opacity="0.9"/>
+          <rect [attr.x]="pad.x"                   [attr.y]="pad.y - 8" width="4" height="12" fill="#00ff88"/>
+          <rect [attr.x]="pad.x + pad.width - 4"   [attr.y]="pad.y - 8" width="4" height="12" fill="#00ff88"/>
+          <text *ngIf="pad.multiplier > 1"
+                [attr.x]="pad.x + pad.width / 2" [attr.y]="pad.y - 12"
+                text-anchor="middle" fill="#ffdd00" font-size="13" font-weight="bold">{{ padLabel(pad) }}</text>
+          <text [attr.x]="pad.x + pad.width / 2" [attr.y]="pad.y - 28"
+                text-anchor="middle" fill="#00ff88" font-size="16" class="pad-arrow">▼</text>
+        </g>
 
-      <!-- Laser shots -->
-      <div
-        *ngFor="let laser of laserShots"
-        class="laser"
-        [style.left.px]="laser.x"
-        [style.top.px]="laser.y">
-      </div>
+        <!-- Power-ups -->
+        <g *ngFor="let pu of powerUps">
+          <circle [attr.cx]="pu.x" [attr.cy]="pu.y" r="14"
+                  [attr.fill]="pu.type === 'fuel' ? '#ff8800' : '#aa44ff'" opacity="0.9" class="powerup-orb"/>
+          <text [attr.x]="pu.x" [attr.y]="pu.y + 5"
+                text-anchor="middle" font-size="13" font-weight="bold" fill="#fff">{{ pu.type === 'fuel' ? 'F' : 'P' }}</text>
+        </g>
 
-      <!-- Special event flash -->
-      <div class="special-msg" *ngIf="specialMessage()">{{ specialMessage() }}</div>
+        <!-- Enemies (UFOs) -->
+        <g *ngFor="let e of enemies">
+          <ellipse [attr.cx]="e.x" [attr.cy]="e.y"      rx="22" ry="8"  fill="#cc0044" opacity="0.9"/>
+          <ellipse [attr.cx]="e.x" [attr.cy]="e.y - 7"  rx="10" ry="7"  fill="#ff2266" opacity="0.9"/>
+          <ellipse [attr.cx]="e.x" [attr.cy]="e.y"      rx="22" ry="8"  fill="none" stroke="#ff4488" stroke-width="1" class="ufo-glow"/>
+        </g>
 
-      <!-- Launch hint -->
-      <div class="launch-hint" *ngIf="hasBallOnPaddle() && !gameOver()">
-        Press SPACE to launch!
-      </div>
+        <!-- Enemy bullets -->
+        <circle *ngFor="let b of enemyBullets"
+                [attr.cx]="b.x" [attr.cy]="b.y" r="4" fill="#ff4444" class="bullet-glow"/>
 
-      <!-- Game Over overlay -->
+        <!-- Particles -->
+        <circle *ngFor="let p of particles"
+                [attr.cx]="p.x" [attr.cy]="p.y" [attr.r]="p.size"
+                [attr.fill]="p.color" [attr.opacity]="particleOpacity(p)"/>
+
+        <!-- Lander -->
+        <g *ngIf="lander && !crashed" [attr.transform]="landerTransform()">
+          <polygon points="0,-18 -11,12 11,12" fill="#88ccff" stroke="#aaddff" stroke-width="1.5"/>
+          <line x1="-11" y1="12" x2="-18" y2="18" stroke="#aaddff" stroke-width="2"/>
+          <line x1=" 11" y1="12" x2=" 18" y2="18" stroke="#aaddff" stroke-width="2"/>
+          <line x1="-18" y1="18" x2="-22" y2="18" stroke="#aaddff" stroke-width="2"/>
+          <line x1=" 18" y1="18" x2=" 22" y2="18" stroke="#aaddff" stroke-width="2"/>
+          <circle cx="0" cy="-2" r="5" fill="#00ccff" opacity="0.8"/>
+          <polygon *ngIf="lander.thrusting" points="0,22 -6,14 6,14" fill="#ff8800" opacity="0.9" class="flame"/>
+        </g>
+
+      </svg>
+
+      <!-- Flash message -->
+      <div class="flash-msg" *ngIf="message()">{{ message() }}</div>
+
+      <!-- Game Over -->
       <div class="game-over-screen" *ngIf="gameOver()">
         <div class="game-over-content">
-          <h1>Game Over!</h1>
+          <h1>MISSION OVER</h1>
           <p class="final-score">Score: {{ score() }}</p>
           <p>Level reached: {{ level() }}</p>
-          <p class="best-score" *ngIf="score() === getBestScore() && gameCount > 1">⭐ New Session Best!</p>
-          <button (click)="restartGame()" class="restart-btn">Play Again</button>
+          <p class="best-score" *ngIf="score() === getBestScore() && sessionHistory.length > 1">⭐ New Best!</p>
+          <button (click)="restartGame()" class="restart-btn">LAUNCH AGAIN</button>
         </div>
       </div>
 
     </div>
   </div>
 
-  <!-- Controls hint -->
+  <!-- Controls -->
   <div class="controls">
-    ← → or A / D to move &nbsp;|&nbsp; SPACE to launch
-    <span *ngIf="activePowerUp === 'laser'">&nbsp;|&nbsp; SPACE to fire laser</span>
+    ← → or A / D to rotate &nbsp;|&nbsp; ↑ or SPACE to thrust &nbsp;|&nbsp; Land gently on <span style="color:#00ff88">green pads</span>
   </div>
 
   <!-- Session History -->
-  <div class="history" *ngIf="sessionHistory.length > 0" [style.width.px]="gameWidth">
-    <h2>Session History</h2>
+  <div class="history" *ngIf="sessionHistory.length > 0" [style.width.px]="GW">
+    <h2>Mission Log</h2>
     <table>
-      <thead>
-        <tr>
-          <th>Game</th>
-          <th>Score</th>
-          <th>Level</th>
-          <th>Time</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Mission</th><th>Score</th><th>Level</th><th>Time</th></tr></thead>
       <tbody>
-        <tr
-          *ngFor="let record of sessionHistory"
-          [class.best-row]="record.score === getBestScore()">
-          <td>#{{ record.gameNumber }}</td>
-          <td>{{ record.score }}</td>
-          <td>{{ record.level }}</td>
-          <td>{{ record.time }}</td>
+        <tr *ngFor="let r of sessionHistory; let i = index" [class.best-row]="r.score === getBestScore()">
+          <td>#{{ sessionHistory.length - i }}</td>
+          <td>{{ r.score }}</td>
+          <td>{{ r.level }}</td>
+          <td>{{ r.time }}</td>
         </tr>
       </tbody>
     </table>
